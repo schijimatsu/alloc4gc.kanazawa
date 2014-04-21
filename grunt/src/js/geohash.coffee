@@ -39,7 +39,7 @@ class GeoHash
       even: "028b", 
       odd: "0145hjnp", 
     ,
-  
+
   adjacent: (direction) ->
     src_hash = geohash.toLowerCase()
     last_chr = src_hash.charAt src_hash.length-1
@@ -72,10 +72,10 @@ class GeoHash
         geohash += BASE32[ch]
         bit = 0
         ch = 0
-  
+
     @center_lat = (@lat_arr[0]+@lat_arr[1])/2
     @center_lon = (@lon_arr[0]+@lon_arr[1])/2
-    
+
     return @geohash
 
   decode: (geohash=null) ->
@@ -93,7 +93,7 @@ class GeoHash
           arr[0] = mid
         else
           arr[1] = mid
-      
+
         is_even = not is_even
 
     [@lat, @lon] = [(lat_arr[0]+lat_arr[1])/2, (lon_arr[0]+lon_arr[1])/2]

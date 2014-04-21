@@ -1,0 +1,19 @@
+<div>
+  <h5>あなたの住所が当てはまる地区を選んでください。</h5>
+  <table class="table table-hover">
+    <thead>
+      <tr>
+        <th>住所</th>
+        <th>地区</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#choices}}
+        <tr>
+          <td>{{address}}</td>
+          <td>{{chiku}}</td>
+        </tr>
+      {{/choices}}
+    </tbody>
+  </table>
+</div>

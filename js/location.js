@@ -1,6 +1,6 @@
 (function() {
   "use strict";
-  var APPID, AllocationManager, Aza, Banchi, Gaiku, Mapview, Node, SubNode, YOLP, absorbError, allocationManager, bit_lat, bit_lon, failGetLocation, generatePulldownList, geo_hash_precision, getLocation, horizontal_unit, jsonp, loadlib, reverseGeoCode, sample_lat, sample_lon, self, successGetLocation, unit_angle_lat, unit_angle_lon, vertical_unit,
+  var APPID, AllocationManager, Aza, Banchi, Gaiku, Mapview, Node, SubNode, YOLP, allocationManager, failGetLocation, generateKeyValueList, generatePulldownList, getLocation, jsonp, loadlib, reverseGeoCode, sample_lat, sample_lon, self, successGetLocation,
     __hasProp = {}.hasOwnProperty,
     __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
 
@@ -73,43 +73,6 @@
       datum: 'wgs',
       callback: 'successReverseGeocode'
     }, callback);
-  };
-
-  geo_hash_precision = 9;
-
-  vertical_unit = 4.763;
-
-  horizontal_unit = 3.849;
-
-  bit_lat = Math.ceil(geo_hash_precision * 5 / 2);
-
-  bit_lon = Math.floor(geo_hash_precision * 5 / 2);
-
-  unit_angle_lat = 180 / Math.pow(2, bit_lat);
-
-  unit_angle_lon = 360 / Math.pow(2, bit_lon);
-
-  absorbError = function(lat, lon, accuracy, callback) {
-    var accuracy_as_angle, center_hash, diff_lat, diff_lon, east_lat, sum_of_horizontal_unit, sum_of_vertical_unit, _results;
-    if (callback == null) {
-      callback = null;
-    }
-    center_hash = new GeoHash();
-    center_hash.encode(lat, lon);
-    accuracy_as_angle = accuracy;
-    east_lat = diff_lat = center_hash.center_lat - lat;
-    diff_lon = center_hash.center_lon - lon;
-    sum_of_vertical_unit = vertical_unit / 2;
-    sum_of_horizontal_unit = horizontal_unit / 2;
-    _results = [];
-    while (accuracy < sum_of_vertical_unit && accuracy < sum_of_horizontal_unit) {
-      if (accuracy > sum_of_vertical_unit) {
-        _results.push(sum_of_vertical_unit += vertical_unit);
-      } else {
-        _results.push(void 0);
-      }
-    }
-    return _results;
   };
 
   allocationManager = null;
@@ -389,7 +352,7 @@
     };
 
     Banchi.prototype.narrow = function(callback) {
-      var banchis, bu, chiku, m, moreThan, number, r, _;
+      var banchis, bu, chiku, key, m, moreThan, number, r, _, _i, _len, _ref;
       if (this.address === '' && !this.allocation['']) {
         if (this.parentNode.parentNode.allocation['others']) {
           this.nodes['others'] = this.parentNode.parentNode.allocation['others'];
@@ -397,15 +360,19 @@
         bu = this.bottomUp();
         for (chiku in bu) {
           banchis = bu[chiku];
-          this.nodes[this.integrateBanchis(banchis).join(',')] = chiku;
+          _ref = this.integrateBanchis(banchis);
+          for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+            key = _ref[_i];
+            this.nodes[key] = chiku;
+          }
         }
       } else {
         r = RegExp("" + ("^(-|－)*(" + (((function() {
-          var _ref, _results;
-          _ref = this.allocation;
+          var _ref1, _results;
+          _ref1 = this.allocation;
           _results = [];
-          for (number in _ref) {
-            _ = _ref[number];
+          for (number in _ref1) {
+            _ = _ref1[number];
             if (number !== '') {
               _results.push(number);
             }
@@ -492,19 +459,9 @@
             })()
           }));
           self.infowindow.open(self.map, self.marker);
-          return document.getElementById("ui").innerHTML = window['Templates']['pulldown'].render({
-            'single_choices': (function() {
-              var _i, _len, _ref, _results;
-              _ref = generatePulldownList(chiku_list);
-              _results = [];
-              for (_i = 0, _len = _ref.length; _i < _len; _i++) {
-                chiku = _ref[_i];
-                _results.push({
-                  item: chiku
-                });
-              }
-              return _results;
-            })()
+          console.log(JSON.stringify(chiku_list));
+          return document.getElementById("ui").innerHTML = window['Templates']['table'].render({
+            'choices': generateKeyValueList(chiku_list)
           });
         });
       });
@@ -513,6 +470,27 @@
     return Mapview;
 
   })();
+
+  generateKeyValueList = function(struct, text) {
+    var item, k, list, v;
+    if (text == null) {
+      text = '';
+    }
+    list = [];
+    for (k in struct) {
+      v = struct[k];
+      if (typeof v === 'object') {
+        list = Array.prototype.concat.apply(list, generateKeyValueList(v, "" + text + k));
+      } else {
+        item = {
+          address: text + ("" + (k !== '' ? '-' : '') + k),
+          chiku: v
+        };
+        list.push(item);
+      }
+    }
+    return list;
+  };
 
   generatePulldownList = function(struct, text) {
     var k, list, v;

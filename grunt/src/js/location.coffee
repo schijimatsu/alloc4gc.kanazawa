@@ -66,26 +66,26 @@ reverseGeoCode = (lat, lon, accuracy, callback=null) ->
     # dist: Math.floor(accuracy*1000)/1000, 
   }, callback
 
-geo_hash_precision = 9
-vertical_unit = 4.763
-horizontal_unit = 3.849
-bit_lat = Math.ceil geo_hash_precision * 5 / 2
-bit_lon = Math.floor geo_hash_precision * 5 / 2
-unit_angle_lat = 180 / 2 ** bit_lat
-unit_angle_lon = 360 / 2 ** bit_lon
+# geo_hash_precision = 9
+# vertical_unit = 4.763
+# horizontal_unit = 3.849
+# bit_lat = Math.ceil geo_hash_precision * 5 / 2
+# bit_lon = Math.floor geo_hash_precision * 5 / 2
+# unit_angle_lat = 180 / 2 ** bit_lat
+# unit_angle_lon = 360 / 2 ** bit_lon
 
-absorbError = (lat, lon, accuracy, callback=null) ->
-  center_hash = new GeoHash()
-  center_hash.encode(lat, lon)
-  accuracy_as_angle = accuracy
-  east_lat = 
-  diff_lat = center_hash.center_lat - lat
-  diff_lon = center_hash.center_lon - lon
-  sum_of_vertical_unit = vertical_unit / 2
-  sum_of_horizontal_unit = horizontal_unit / 2
-  while accuracy < sum_of_vertical_unit and accuracy < sum_of_horizontal_unit
-    if accuracy > sum_of_vertical_unit
-      sum_of_vertical_unit += vertical_unit
+# absorbError = (lat, lon, accuracy, callback=null) ->
+#   center_hash = new GeoHash()
+#   center_hash.encode(lat, lon)
+#   accuracy_as_angle = accuracy
+#   east_lat = 
+#   diff_lat = center_hash.center_lat - lat
+#   diff_lon = center_hash.center_lon - lon
+#   sum_of_vertical_unit = vertical_unit / 2
+#   sum_of_horizontal_unit = horizontal_unit / 2
+#   while accuracy < sum_of_vertical_unit and accuracy < sum_of_horizontal_unit
+#     if accuracy > sum_of_vertical_unit
+#       sum_of_vertical_unit += vertical_unit
 
 # @successReverseGeocode = (result) ->
 #   # document.body.innerHTML = JSON.stringify result
@@ -123,7 +123,7 @@ class Aza extends Node
         list = Array.prototype.concat.apply list, @generateList(v, "#{text}#{k}:")
       else
         list.push text+"#{k}:#{v}"
-    
+
     return list
 
   generateChikuList: (@address, callback) ->
@@ -140,7 +140,7 @@ class Aza extends Node
         alert 'The Aza that corresponds to the allocation-data could not be found. aza :'+aza_under
     else
       alert 'Not in Kanazawa. address :'+@address
-    
+
     callback @nodes
 
 class Gaiku extends SubNode
@@ -164,7 +164,7 @@ class Gaiku extends SubNode
       else
         alert "The Gaiku that corresponds to the allocation-data could not be found.\naddress :#{@parentNode.address} gaiku :#{@address}"
         banchi_under = null
-    
+
       if banchi_under != null
         @nodes[@key] = new Banchi(@, @allocation[@key], banchi_under).narrow()
 
@@ -179,7 +179,7 @@ class Banchi extends SubNode
         bu[@allocation[banchi]] = [banchi]
       else
         bu[@allocation[banchi]].push banchi
-    
+
     return bu
 
   integrateBanchis: (banchis=[]) ->
@@ -237,7 +237,8 @@ class Banchi extends SubNode
 
       bu = @bottomUp()
       for chiku, banchis of bu
-        @nodes[@integrateBanchis(banchis).join ','] = chiku
+        for key in @integrateBanchis banchis
+          @nodes[key] = chiku
     else
       r = ///#{"^(-|－)*(#{(number for number, _ of @allocation when number != '').sort((a, b) -> return b - a).join('|')})$"}///
       m = r.exec @address
@@ -300,9 +301,25 @@ class Mapview
           content: ({item: chiku} for chiku in list)
         }
         self.infowindow.open self.map, self.marker
-        document.getElementById("ui").innerHTML = window['Templates']['pulldown'].render {
-          'single_choices': ({item: chiku} for chiku in generatePulldownList chiku_list)
+        # document.getElementById("ui").innerHTML = window['Templates']['pulldown'].render {
+        #   'single_choices': ({item: chiku} for chiku in generatePulldownList chiku_list)
+        # }
+        console.log JSON.stringify chiku_list
+        document.getElementById("ui").innerHTML = window['Templates']['table'].render {
+          'choices': generateKeyValueList chiku_list
         }
+
+generateKeyValueList = (struct, text='') ->
+  list = []
+  for k, v of struct
+    if typeof v == 'object'
+      list = Array.prototype.concat.apply list, generateKeyValueList(v, "#{text}#{k}")
+    else
+      item = 
+        address: text+"#{if k != '' then '-' else ''}#{k}"
+        chiku: v
+      list.push item
+  return list
 
 generatePulldownList = (struct, text='') ->
   list = []
@@ -311,7 +328,7 @@ generatePulldownList = (struct, text='') ->
       list = Array.prototype.concat.apply list, generatePulldownList(v, "#{text}#{k}")
     else
       list.push text+"#{if k != '' then '-' else ''}#{k} --- #{v}"
-  
+
   return list
 
 $(() ->
