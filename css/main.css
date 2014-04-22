@@ -1,0 +1,14 @@
+.table-hover thead th {
+  background-color: #eeeeee; }
+.table-hover tbody tr:hover td {
+  background-color: #aaaaaa;
+  color: white; }
+.table-hover tbody tr:active td {
+  background-color: #aaaaaa;
+  color: white; }
+
+#map {
+  height: 80%; }
+
+#ui {
+  height: 20%; }

@@ -1,0 +1,19 @@
+<div class="selector-choices selector-choices-multi">
+{{#multi_choices}}
+  {{#azas}}
+    <select>
+      <option>{{item}}</option>
+    </select>
+    <select>
+    {{#gaikus}}
+      <option>{{item}}</option>
+    {{/gaikus}}
+    </select>
+    <select>
+    {{#banchis}}
+      <option>{{item}}</option>
+    {{/banchis}}
+    </select>
+  {{/azas}}
+{{/multi_choices}}
+</div>
