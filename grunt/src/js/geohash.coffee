@@ -41,7 +41,7 @@ class GeoHash
     ,
 
   adjacent: (direction) ->
-    src_hash = geohash.toLowerCase()
+    src_hash = @geohash.toLowerCase()
     last_chr = src_hash.charAt src_hash.length-1
     type = if src_hash.length % 2 then 'even' else 'odd'
     base = src_hash.slice 0, -1
@@ -56,7 +56,7 @@ class GeoHash
     ch = 0
     @geohash = ''
 
-    while geohash.length < precision
+    while @geohash.length < precision
       [val, arr] = if is_even then [lon, @lon_arr] else [lat, @lat_arr]
       mid = (arr[0] + arr[1]) / 2
       if val > mid
@@ -69,7 +69,7 @@ class GeoHash
       if bit < 4
         bit++
       else
-        geohash += BASE32[ch]
+        @geohash += BASE32[ch]
         bit = 0
         ch = 0
 
