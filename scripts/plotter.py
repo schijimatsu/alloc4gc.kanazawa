@@ -1,16 +1,63 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import os, sys
+import os
+import sys
 import json
 import codecs
+import re
 from optparse import OptionParser
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-
+from unicodedata import normalize
+import sqlite3
+import time
+import logging
+from logging.config import dictConfig
+dictConfig({
+  'version': 1,              
+  'disable_existing_loggers': False,
+  'formatters': {
+    'standard': {
+      'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+    },
+  },
+  'handlers': {
+    'default': {
+      'level':'DEBUG',
+      'class':'logging.StreamHandler',
+    },
+  },
+  'loggers': {
+    '': {
+      'handlers': ['default'],
+      'level': 'DEBUG',
+      'propagate': False
+    },
+  }
+})
+logger = logging.getLogger(__package__)
+from geohash import (
+  encode as encode_to_geohash, 
+  decode as decode_from_geohash, 
+  neighbors, 
+)
+from simplekml import Kml
 # sys.stdout = codecs.lookup('utf-8')[-1](sys.stdout)
 # sys.stdout = codecs.getwriter('utf_8')(sys.stdout)
 
+from shapely.geometry import (
+ Point, 
+)
+from shapely.geometry.polygon import (
+  LinearRing, 
+  Polygon, 
+)
+from shapely.ops import cascaded_union
+from scripts.polygon import (
+  get_square_boundary, 
+  get_polygon, 
+)
 '''
 {
   'geohash': [
@@ -30,8 +77,40 @@ from urllib.request import Request, urlopen
     b3b63e985a61dc575026bd5036ab24399d83a02e
 '''
 ADDRESS_PREFIX = '石川県金沢市'
-YOLP = 'http://geo.search.olp.yahooapis.jp/OpenLocalPlatform/V1/geoCoder'
+GEOCODER = 'http://geo.search.olp.yahooapis.jp/OpenLocalPlatform/V1/geoCoder'
+REVERSE_GEOCODER = 'http://reverse.search.olp.yahooapis.jp/OpenLocalPlatform/V1/reverseGeoCoder'
 APPID = 'dj0zaiZpPUJhRjVhaE1hQW5KbCZzPWNvbnN1bWVyc2VjcmV0Jng9YjY-'
+NORMALIZE_FLAGS = 'NFKC'
+
+conn = None
+
+def insert(chiku, boundary):
+  c = conn.cursor()
+  geohashes = list_geohashes(boundary)
+  sql = 'insert into chikus(chiku, geohash) values(\'%s\', \'%s\')'
+  for geohash in geohashes:
+    c.execute(sql % (chiku, geohash))
+
+  conn.commit()
+  c.close()
+
+def insert_aza(chiku, aza):
+  geocoded = geocode(ADDRESS_PREFIX + aza)
+  insert(chiku, geocoded)
+
+def insert_gaiku(chiku, aza, gaiku):
+  geocoded = geocode(ADDRESS_PREFIX + aza + gaiku)
+  if geocoded is None:
+    geocoded = geocode(ADDRESS_PREFIX + aza)
+  insert(chiku, geocoded)
+
+def insert_banchi(chiku, aza, gaiku, banchi):
+  geocoded = geocode(ADDRESS_PREFIX + aza + gaiku + '-' + banchi)
+  if geocoded is None:
+    geocoded = geocode(ADDRESS_PREFIX + aza + gaiku)
+  if geocoded is None:
+    geocoded = geocode(ADDRESS_PREFIX + aza)
+  insert(chiku, geocoded)
 
 def plot(input, output='geohash.json'):
   allocations = None
@@ -39,143 +118,235 @@ def plot(input, output='geohash.json'):
     allocations = json.load(f)
 
   boundaries = []
+  counter = 0
   for aza, gaikus in allocations.items():
     for gaiku, banchis in gaikus.items():
-      for banchi, chiku in banchis.items():
-        if gaiku == '':
-          boundaries.append(geocode(ADDRESS_PREFIX+aza))
-        elif banchi == '':
-          boundaries.append(geocode(ADDRESS_PREFIX+aza+gaiku))
-        else:
-          boundaries.append(geocode(ADDRESS_PREFIX+aza+gaiku+'-'+banchi))
+      # time.sleep(1)
+      logger.debug('gaiku: %s, banchis: %s' %(gaiku, banchis))
+      if isinstance(banchis, dict):
+        for banchi, chiku in banchis.items():
+          counter += 1
+        #   time.sleep(1)
+        #   if gaiku == '':
+        #     insert_aza(chiku, aza)
+        #   elif banchi == '':
+        #     insert_gaiku(chiku, aza, gaiku)
+        #   else:
+        #     insert_banchi(chiku, aza, gaiku, banchi)
+      else:
+        counter += 1
+        # if gaiku == '':
+        #   insert_aza(banchis, aza)
+        # elif gaiku != 'others':
+        #   insert_gaiku(banchis, aza, gaiku)
+        # else:
+        #   logger.debug('No address. %s%s%s' %(aza, gaiku, banchis))
+        #   pass
 
-  geohashes = list_geohashes(boundaries)
-  with open(output, 'w') as f:
-    json.dump(geohashes, f)
+  logger.debug('counter: %d' % counter)
+  # geohashes = list_geohashes(boundaries)
+  # with open(output, 'w') as f:
+  #   json.dump(geohashes, f)
+
+def list_geohashes(boundary, precision=8):
+  geohashes = []
+  if boundary is not None:
+    west, south, east, north = boundary
+    north_west = GeoHash().encode(north, west, precision=precision)
+    north_east = GeoHash().encode(north, east, precision=precision)
+    south_east = GeoHash().encode(south, east, precision=precision)
+
+    temp = north_west
+    count = 0
+    while True:
+      # if count >= 500000: geohashes.append(temp)
+      geohashes.append(temp)
+      if temp == south_east:
+        break
+      elif temp == north_east:
+        north_west = north_west.adjacent('bottom')
+        north_east = north_east.adjacent('bottom')
+        temp = north_west
+      else:
+        temp = temp.adjacent('right')
+      # count += 1
+      # if count >= 500010:
+      #   break
+
+  return geohashes
+
+def reverse_geocode(lat, lon):
+  data = urlencode(
+    dict(
+      appid=APPID,
+      lat=lat, 
+      lon=lon, 
+      output='json',
+    )
+  ).encode('utf8')
+  request = Request(REVERSE_GEOCODER, data=data, method='GET')
+  with urlopen('%s?%s' % (request.get_full_url(), request.get_data().decode('ascii'))) as response:
+    response_text = response.read()
+
 
 def geocode(address):
+  normal_address = normalize(NORMALIZE_FLAGS, address)
+  logger.debug(normal_address)
   data = urlencode({
     'appid': APPID,
-    'query': address,
+    'query': normal_address,
     'ei': 'UTF-8',
     'output': 'json',
   }).encode('utf8')
-  request = Request(YOLP, data=data, method='GET')
+  request = Request(GEOCODER, data=data, method='GET')
   with urlopen('%s?%s' % (request.get_full_url(), request.get_data().decode('ascii'))) as response:
-    print(type(json.dumps(json.loads(response.read().decode('utf8'), encoding='utf8'))))
+    response_text = response.read().decode('utf8')
+    response_obj = json.loads(response_text, encoding='utf8')
+    try:
+      result_info = response_obj['ResultInfo']
+      result_status = result_info['Status']
+      result_count = result_info['Count']
+      result_feature = None
+      if result_status == 200 and result_count > 0:
+        if result_count == 1:
+          result_feature = response_obj['Feature'][0]
+        else:
+          result_feature = response_obj['Feature'][0]
 
-def list_geohashes(boundaries):
-  pass
+        result_property = result_feature['Property']
+        result_geometry = result_feature['Geometry']
+        result_address = normalize(NORMALIZE_FLAGS, result_property['Address'])
+        return [float(point.strip()) for point in re.split(r',| ', result_geometry['BoundingBox'])]
+      else:
+        print('Failed to get bounding box for %s, %s' %(address, response_obj))
+        return None
+    except:
+      logger.debug(response_text)
+      logger.exception('Error.')
+      sys.exit(1)
 
 class GeoHash(object):
-  BITS = [0x10, 0x08, 0x04, 0x02, 0x01]
-  BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz"
+  def __init__(self, geohash=None):
+    if geohash is not None:
+      self.geohash = geohash
 
-  NEIGHBORS = {
-    'right': {
-      'even': "bc01fg45238967deuvhjyznpkmstqrwx", 
-      'odd': "p0r21436x8zb9dcf5h7kjnmqesgutwvy", 
-    },
-    'left': {
-      'even': "238967debc01fg45kmstqrwxuvhjyznp", 
-      'odd': "14365h7k9dcfesgujnmqp0r2twvyx8zb", 
-    },
-    'top': {
-      'even': "p0r21436x8zb9dcf5h7kjnmqesgutwvy", 
-      'odd': "bc01fg45238967deuvhjyznpkmstqrwx", 
-    },
-    'bottom': {
-      'even': "14365h7k9dcfesgujnmqp0r2twvyx8zb", 
-      'odd': "238967debc01fg45kmstqrwxuvhjyznp", 
-    },
-  }
-
-  BORDERS = {
-    'right': {
-      'even': "bcfguvyz", 
-      'odd': "prxz", 
-    },
-    'left': {
-      'even': "0145hjnp", 
-      'odd': "028b", 
-    },
-    'top': {
-      'even': "prxz", 
-      'odd': "bcfguvyz", 
-    },
-    'bottom': {
-      'even': "028b", 
-      'odd': "0145hjnp", 
-    },
-  }
-
-  def adjacent(self, direction):
-    src_hash = self.geohash.lower()
-    last_chr = src_hash[len(src_hash)-1:len(src_hash)]
-    type = 'even' if src_hash.length % 2 else 'odd'
-    base = src_hash[0:-1]
-    if GeoHash.BORDERS[direction][type].find(last_chr) != -1:
-      base = self.adjacent(base, direction)
-    return base + GeoHash.BASE32[GeoHash.NEIGHBORS[direction][type].find(last_chr)]
-
-  def encode(self, lat, lon, precision=12):
-    is_even = True
-    [self.lat_arr, self.lon_arr] = [[-90.0, 90.0], [-180.0, 180.0]]
-    bit = 0
-    ch = 0
-    self.geohash = ''
-
-    while len(self.geohash) < precision:
-      [val, arr] = [lon, self.lon_arr] if is_even else [lat, self.lat_arr]
-      mid = (arr[0] + arr[1]) / 2
-      if val > mid:
-        ch |= GeoHash.BITS[bit]
-        arr[0] = mid
-      else:
-        arr[1] = mid
-
-      is_even = not is_even
-      if bit < 4:
-        bit += 1
-      else:
-        self.geohash += GeoHash.BASE32[ch]
-        bit = 0
-        ch = 0
-
-    self.center_lat = (self.lat_arr[0] + self.lat_arr[1]) / 2
-    self.center_lon = (self.lon_arr[0] + self.lon_arr[1]) / 2
-
+  def __repr__(self):
     return self.geohash
 
-  def decode(self, geohash=None):
-    self.geohash = geohash or self.geohash
-    [lat_arr, lon_arr] = [[-90.0, 90.0], [-180.0, 180.0]]
-    bit = 0
-    is_even = True
+  def __eq__(self, other):
+    # logger.debug('%s == %s: %s' %(other.geohash, self.geohash, self.geohash == other.geohash))
+    return self.geohash == other.geohash
 
-    for c in geohash.split(''):
-      ch = GeoHash.BASE32.find(c)
-      for i in range(5):
-        arr = lat_arr if is_even else lon_arr
-        mid = (arr[0] + arr[1]) / 2
-        if ch & GeoHash.BITS[bit]:
-          arr[0] = mid
-        else:
-          arr[1] = mid
+  def adjacent(self, direction):
+    adjacents = neighbors(self.geohash)
+    ret = GeoHash()
+    if direction == 'top':
+      ret.geohash = adjacents[3]
+    elif direction == 'left':
+      ret.geohash = adjacents[0]
+    elif direction == 'right':
+      ret.geohash = adjacents[1]
+    elif direction == 'bottom':
+      ret.geohash = adjacents[2]
+    else:
+      ret.geohash = None
 
-        is_even = not is_even
+    return ret
 
-    [self.lat, self.lon] = [(lat_arr[0] + lat_arr[1]) / 2, (lon_arr[0] + lon_arr[1]) / 2]
-    return [self.lat, self.lon]
+  def encode(self, lat, lon, precision=8):
+    self.precision = precision
+    self.geohash = encode_to_geohash(lat, lon, precision=precision)
+    return self
+
+  def decode(self, delta=False):
+    self.point = decode_from_geohash(self.geohash, delta)
+    self.precision = len(self.geohash)
+    self.delta = delta
+    return self.point
+
+  def get_boundary(self):
+    point = self.decode(delta=True)
+    return (point[1] - point[3], point[0] - point[2], point[1] + point[3], point[0] + point[2])
+
+  def to_polygon(self):
+    geohash_boundary = self.get_boundary()
+    coordinates = []
+    for i in range(len(geohash_boundary)):
+      lat, lon = None, None
+      if len(geohash_boundary)-1 <= i:
+        lat = geohash_boundary[i]
+        lon = geohash_boundary[0]
+      elif i % 2 == 0:
+        lat = geohash_boundary[i+1]
+        lon = geohash_boundary[i]
+      elif i % 2 == 1:
+        lat = geohash_boundary[i]
+        lon = geohash_boundary[i+1]
+      coordinates.append((lon, lat))
+    poly = Polygon(coordinates)
+    return poly
+
+def convert_to_kml(geohashes):
+  kml = Kml()
+  for geohash in geohashes:
+    poly = geohash.to_polygon()
+    kml.newpolygon(name=geohash.geohash, outerboundaryis=[(coord[1], coord[0]) for coord in poly.exterior.coords])
+  return kml
+
+def prepare_geohash(conn, path):
+  c = conn.cursor()
+  # c.execute('drop table chikus;')
+  # c.execute('drop table geohashes;')
+  conn.commit()
+  # c.execute('create table chikus (chiku varchar(64), geohash varchar(64));')
+  c.execute('create table geohashes (geohash varchar(16), lat real, lon real, delta integer, is_border int);')
+  conn.commit()
+  c.close()
+
+  try:
+    boundary = get_square_boundary(path)
+    geohashes = list_geohashes(boundary, precision=8)
+    boundary_ring = get_polygon(path)
+    # convert_to_kml(geohashes).save('geohash.kml')
+    c = conn.cursor()
+    for geohash in geohashes:
+      geohash_ring = geohash.to_polygon()
+      if boundary_ring.intersects(geohash_ring):
+        c.execute("insert into geohashes values('%s', %0.13f, %0.13f, %d, %d);" %(
+            geohash.geohash, 
+            geohash.point[0], 
+            geohash.point[1], 
+            geohash.delta, 
+            1 if not boundary_ring.contains(geohash_ring) else 0, 
+          )
+        )
+        conn.commit()
+    c.close()
+  except:
+    logger.exception()
 
 if __name__ == '__main__':
-  # parser = OptionParser()
-  # parser.add_option("-o", dest="output", help="pass the path/to/geohash.json", metavar="FILE")
+  parser = OptionParser()
+  parser.add_option("-o", dest="output", help="pass the path/to/geohash.json", metavar="FILE")
 
-  # (options, args) = parser.parse_args()
+  (options, args) = parser.parse_args()
 
-  # if len(args) > 0:
-  #   params = [args[0], options.get('output', None)]
-  #   plot(*[param for param in params if param is not None])
-  geocode(ADDRESS_PREFIX+'城南二丁目22-9')
-  # print(urlopen('http://geo.search.olp.yahooapis.jp/OpenLocalPlatform/V1/geoCoder?appid=dj0zaiZpPUJhRjVhaE1hQW5KbCZzPWNvbnN1bWVyc2VjcmV0Jng9YjY-&query=%E7%9F%B3%E5%B7%9D%E7%9C%8C%E9%87%91%E6%B2%A2%E5%B8%82%E5%9F%8E%E5%8D%97%E4%BA%8C%E4%B8%81%E7%9B%AE%EF%BC%92%EF%BC%92'))
+  conn = sqlite3.connect('geohash.sqlite')
+  # prepare_geohash(conn, args[0])
+  # c = conn.cursor()
+
+  # c.execute('select * from geohashes where is_border = 1;')
+  # whole_poly = None
+  # count = 0
+  # polygons = []
+  # for row in c:
+  #   geohash = GeoHash(geohash=row[0])
+  #   temp = geohash.to_polygon()
+  #   if whole_poly is None:
+  #     whole_poly = temp
+  #   else:
+  #     whole_poly = whole_poly.union(temp)
+
+  # kml = Kml()
+  # kml.newpolygon(name="KanazawaCity", outerboundaryis=[point for point in whole_poly.exterior.coords])
+  # kml.save('boundary_geohash.kml')

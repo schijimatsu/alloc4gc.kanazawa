@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+    <Document id="feat_1">
+        <Placemark id="feat_2">
+            <name>石川県金沢市</name>
+            <Polygon id="geom_0">
+                <outerBoundaryIs>
+                    <LinearRing id="geom_1">
+                        <coordinates>136.8271993261795,36.683931479472506,0.0 136.8271993261795,36.3281487204131,0.0 136.54038146282002,36.3281487204131,0.0 136.54038146282002,36.683931479472506,0.0 136.8271993261795,36.683931479472506,0.0</coordinates>
+                    </LinearRing>
+                </outerBoundaryIs>
+            </Polygon>
+        </Placemark>
+    </Document>
+</kml>
