@@ -55,8 +55,13 @@ from shapely.geometry.polygon import (
 )
 from shapely.ops import cascaded_union
 from scripts.polygon import (
-  get_square_boundary, 
-  get_polygon, 
+  Shape, 
+)
+from scripts.location import (
+  GeoHash, 
+  reverse_geocode, 
+  geocode, 
+  AllocationManager, 
 )
 '''
 {
@@ -77,10 +82,6 @@ from scripts.polygon import (
     b3b63e985a61dc575026bd5036ab24399d83a02e
 '''
 ADDRESS_PREFIX = '石川県金沢市'
-GEOCODER = 'http://geo.search.olp.yahooapis.jp/OpenLocalPlatform/V1/geoCoder'
-REVERSE_GEOCODER = 'http://reverse.search.olp.yahooapis.jp/OpenLocalPlatform/V1/reverseGeoCoder'
-APPID = 'dj0zaiZpPUJhRjVhaE1hQW5KbCZzPWNvbnN1bWVyc2VjcmV0Jng9YjY-'
-NORMALIZE_FLAGS = 'NFKC'
 
 conn = None
 
@@ -175,116 +176,6 @@ def list_geohashes(boundary, precision=8):
 
   return geohashes
 
-def reverse_geocode(lat, lon):
-  data = urlencode(
-    dict(
-      appid=APPID,
-      lat=lat, 
-      lon=lon, 
-      output='json',
-    )
-  ).encode('utf8')
-  request = Request(REVERSE_GEOCODER, data=data, method='GET')
-  with urlopen('%s?%s' % (request.get_full_url(), request.get_data().decode('ascii'))) as response:
-    response_text = response.read()
-
-
-def geocode(address):
-  normal_address = normalize(NORMALIZE_FLAGS, address)
-  logger.debug(normal_address)
-  data = urlencode({
-    'appid': APPID,
-    'query': normal_address,
-    'ei': 'UTF-8',
-    'output': 'json',
-  }).encode('utf8')
-  request = Request(GEOCODER, data=data, method='GET')
-  with urlopen('%s?%s' % (request.get_full_url(), request.get_data().decode('ascii'))) as response:
-    response_text = response.read().decode('utf8')
-    response_obj = json.loads(response_text, encoding='utf8')
-    try:
-      result_info = response_obj['ResultInfo']
-      result_status = result_info['Status']
-      result_count = result_info['Count']
-      result_feature = None
-      if result_status == 200 and result_count > 0:
-        if result_count == 1:
-          result_feature = response_obj['Feature'][0]
-        else:
-          result_feature = response_obj['Feature'][0]
-
-        result_property = result_feature['Property']
-        result_geometry = result_feature['Geometry']
-        result_address = normalize(NORMALIZE_FLAGS, result_property['Address'])
-        return [float(point.strip()) for point in re.split(r',| ', result_geometry['BoundingBox'])]
-      else:
-        print('Failed to get bounding box for %s, %s' %(address, response_obj))
-        return None
-    except:
-      logger.debug(response_text)
-      logger.exception('Error.')
-      sys.exit(1)
-
-class GeoHash(object):
-  def __init__(self, geohash=None):
-    if geohash is not None:
-      self.geohash = geohash
-
-  def __repr__(self):
-    return self.geohash
-
-  def __eq__(self, other):
-    # logger.debug('%s == %s: %s' %(other.geohash, self.geohash, self.geohash == other.geohash))
-    return self.geohash == other.geohash
-
-  def adjacent(self, direction):
-    adjacents = neighbors(self.geohash)
-    ret = GeoHash()
-    if direction == 'top':
-      ret.geohash = adjacents[3]
-    elif direction == 'left':
-      ret.geohash = adjacents[0]
-    elif direction == 'right':
-      ret.geohash = adjacents[1]
-    elif direction == 'bottom':
-      ret.geohash = adjacents[2]
-    else:
-      ret.geohash = None
-
-    return ret
-
-  def encode(self, lat, lon, precision=8):
-    self.precision = precision
-    self.geohash = encode_to_geohash(lat, lon, precision=precision)
-    return self
-
-  def decode(self, delta=False):
-    self.point = decode_from_geohash(self.geohash, delta)
-    self.precision = len(self.geohash)
-    self.delta = delta
-    return self.point
-
-  def get_boundary(self):
-    point = self.decode(delta=True)
-    return (point[1] - point[3], point[0] - point[2], point[1] + point[3], point[0] + point[2])
-
-  def to_polygon(self):
-    geohash_boundary = self.get_boundary()
-    coordinates = []
-    for i in range(len(geohash_boundary)):
-      lat, lon = None, None
-      if len(geohash_boundary)-1 <= i:
-        lat = geohash_boundary[i]
-        lon = geohash_boundary[0]
-      elif i % 2 == 0:
-        lat = geohash_boundary[i+1]
-        lon = geohash_boundary[i]
-      elif i % 2 == 1:
-        lat = geohash_boundary[i]
-        lon = geohash_boundary[i+1]
-      coordinates.append((lon, lat))
-    poly = Polygon(coordinates)
-    return poly
 
 def convert_to_kml(geohashes):
   kml = Kml()
@@ -295,10 +186,8 @@ def convert_to_kml(geohashes):
 
 def prepare_geohash(conn, path):
   c = conn.cursor()
-  # c.execute('drop table chikus;')
   # c.execute('drop table geohashes;')
   conn.commit()
-  # c.execute('create table chikus (chiku varchar(64), geohash varchar(64));')
   c.execute('create table geohashes (geohash varchar(16), lat real, lon real, delta integer, is_border int);')
   conn.commit()
   c.close()
@@ -325,28 +214,98 @@ def prepare_geohash(conn, path):
   except:
     logger.exception()
 
+
+def get_polygon(path):
+  shape = Shape(path)
+  shape.load()
+  return shape.union().to_shaply_object()[0]
+
+
+def get_square_boundary(path):
+  shape = Shape(path)
+  shape.load()
+  return shape.union().create_square_boundary().to_tuple()[0]
+
+
+def generate_polygon_from_geohashes(conn, path):
+  c = conn.cursor()
+
+  c.execute('select * from geohashes where is_border = 1;')
+  whole_poly = None
+  count = 0
+  polygons = []
+  for row in c:
+    geohash = GeoHash(geohash=row[0])
+    temp = geohash.to_polygon()
+    if whole_poly is None:
+      whole_poly = temp
+    else:
+      whole_poly = whole_poly.union(temp)
+
+  kml = Kml()
+  kml.newpolygon(name="KanazawaCity", outerboundaryis=[point for point in whole_poly.exterior.coords])
+  kml.save(path)
+
 if __name__ == '__main__':
   parser = OptionParser()
   parser.add_option("-o", dest="output", help="pass the path/to/geohash.json", metavar="FILE")
 
   (options, args) = parser.parse_args()
 
+  conn_allocations = sqlite3.connect('allocation.sqlite')
+  c_allocations = conn_allocations.cursor()
+  c_allocations.execute('drop table chikus;')
+  c_allocations.execute('''
+    create table chikus (
+      id integer primary key autoincrement, 
+      aza varchar(32), 
+      gaiku varchar(32), 
+      banchi varchar(32), 
+      chiku varchar(32), 
+      geohash varchar(64), 
+      lat real, 
+      lon real, 
+      address varchar(128)
+    );
+  ''')
+  conn_allocations.commit()
+
   conn = sqlite3.connect('geohash.sqlite')
+  c = conn.cursor()
   # prepare_geohash(conn, args[0])
-  # c = conn.cursor()
+  # generate_polygon_from_geohashes(conn, 'boundary_geohash.kml')
 
-  # c.execute('select * from geohashes where is_border = 1;')
-  # whole_poly = None
-  # count = 0
-  # polygons = []
-  # for row in c:
-  #   geohash = GeoHash(geohash=row[0])
-  #   temp = geohash.to_polygon()
-  #   if whole_poly is None:
-  #     whole_poly = temp
-  #   else:
-  #     whole_poly = whole_poly.union(temp)
+  c.execute('select * from geohashes where is_border = 1;')
+  manager = AllocationManager(args[0])
+  for row in c:
+    try:
+      address, allocation_data = manager.getAllocationDataByLatLon(row[1], row[2])
+      # logger.debug(
+      #   AllocationManager.generateList(
+      #     allocation_data, 
+      #     '%0.6f,%0.6f,%s,' %(
+      #       row[1], 
+      #       row[2], 
+      #       address, 
+      #     )
+      #   )
+      # )
+      # logger.debug(allocation_data)
+      items = [item.split(':') for item in AllocationManager.generateList(allocation_data)]
+      for aza, gaiku, banchi, chiku in items:
+        logger.debug(aza)
+        c_allocations.execute("insert into chikus(geohash, lat, lon, address, aza, gaiku, banchi, chiku) values('%s', %0.13f, %0.13f, '%s', '%s', '%s', '%s', '%s');" %(
+            row[0], 
+            row[1], 
+            row[2], 
+            address, 
+            aza, 
+            gaiku, 
+            banchi, 
+            chiku, 
+          )
+        )
+      conn_allocations.commit()
+    except:
+      logger.exception('Exception occurred on mapping.')
 
-  # kml = Kml()
-  # kml.newpolygon(name="KanazawaCity", outerboundaryis=[point for point in whole_poly.exterior.coords])
-  # kml.save('boundary_geohash.kml')

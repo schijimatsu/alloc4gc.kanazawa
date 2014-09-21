@@ -278,16 +278,6 @@ class Gxml(object):
           self.parsed.append((key, [tuple(coordinate.split(',')) for coordinate in geometry.split(' ')]))
     return self.parsed
 
-def get_polygon(path):
-  shape = Shape(path)
-  shape.load()
-  return shape.union().to_shaply_object()[0]
-
-def get_square_boundary(path):
-  shape = Shape(path)
-  shape.load()
-  return shape.union().create_square_boundary().to_tuple()[0]
-
 if __name__ == '__main__':
   parser = OptionParser()
   parser.add_option("-o", dest="output", help="pass the path/to/geohash.json", metavar="FILE")
