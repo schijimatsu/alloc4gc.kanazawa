@@ -62,6 +62,7 @@ from scripts.location import (
   reverse_geocode, 
   geocode, 
   AllocationManager, 
+  call_yahoo_api, 
 )
 '''
 {
@@ -246,15 +247,10 @@ def generate_polygon_from_geohashes(conn, path):
   kml.newpolygon(name="KanazawaCity", outerboundaryis=[point for point in whole_poly.exterior.coords])
   kml.save(path)
 
-if __name__ == '__main__':
-  parser = OptionParser()
-  parser.add_option("-o", dest="output", help="pass the path/to/geohash.json", metavar="FILE")
-
-  (options, args) = parser.parse_args()
-
-  conn_allocations = sqlite3.connect('allocation.sqlite')
-  c_allocations = conn_allocations.cursor()
-  c_allocations.execute('drop table chikus;')
+def create_allocation_table(conn):
+  conn = sqlite3.connect('allocation.sqlite')
+  c_allocations = conn.cursor()
+  c_allocations.execute('drop table if exists chikus;')
   c_allocations.execute('''
     create table chikus (
       id integer primary key autoincrement, 
@@ -268,16 +264,46 @@ if __name__ == '__main__':
       address varchar(128)
     );
   ''')
-  conn_allocations.commit()
+  conn.commit()
 
-  conn = sqlite3.connect('geohash.sqlite')
+def create_reverse_geocoding_table(conn):
+  c_allocations = conn.cursor()
+  c_allocations.execute('drop table if exists reverse_geocodings;')
+  c_allocations.execute('''
+    create table reverse_geocodings (
+      id integer primary key autoincrement, 
+      geohash varchar(32), 
+      lat real, 
+      lon real, 
+      response text
+    );
+  ''')
+  conn.commit()
+
+def reverse_geocode_for_all(conn, conn_geocoding):
   c = conn.cursor()
+  c.execute('select * from geohashes;')
+  c_geocoding = conn_geocoding.cursor()
+  for row in c:
+    response_text = call_yahoo_api(row[1], row[2])
+    try:
+      c_geocoding.execute("insert into reverse_geocodings(geohash, lat, lon, response) values(?, ?, ?, ?);", [row[0], row[1], row[2], response_text])
+      conn_geocoding.commit()
+      logger.debug('lat: %0.13f, lon: %0.13f,' %(row[1], row[2]))
+    except:
+      logger.exception('Failed to store response. lat: %0.13f, lon: %0.13f,' %(row[1], row[2]))
+    time.sleep(2)
+
+def allocate_on_border(conn, conn_allocations):
+  c = conn.cursor()
+  c_allocations = conn_allocations.cursor()
   # prepare_geohash(conn, args[0])
   # generate_polygon_from_geohashes(conn, 'boundary_geohash.kml')
 
   c.execute('select * from geohashes where is_border = 1;')
   manager = AllocationManager(args[0])
   for row in c:
+    time.sleep(1.5)
     try:
       address, allocation_data = manager.getAllocationDataByLatLon(row[1], row[2])
       # logger.debug(
@@ -293,7 +319,6 @@ if __name__ == '__main__':
       # logger.debug(allocation_data)
       items = [item.split(':') for item in AllocationManager.generateList(allocation_data)]
       for aza, gaiku, banchi, chiku in items:
-        logger.debug(aza)
         c_allocations.execute("insert into chikus(geohash, lat, lon, address, aza, gaiku, banchi, chiku) values('%s', %0.13f, %0.13f, '%s', '%s', '%s', '%s', '%s');" %(
             row[0], 
             row[1], 
@@ -308,4 +333,21 @@ if __name__ == '__main__':
       conn_allocations.commit()
     except:
       logger.exception('Exception occurred on mapping.')
+
+if __name__ == '__main__':
+  parser = OptionParser()
+  parser.add_option("-o", dest="output", help="pass the path/to/geohash.json", metavar="FILE")
+
+  (options, args) = parser.parse_args()
+
+  # conn_allocations = sqlite3.connect('allocation.sqlite')
+  # create_allocation_table(conn_allocations)
+
+  conn = sqlite3.connect('geohash.sqlite')
+  # allocate_on_border(conn, conn_allocations)
+
+  conn_reverse_geocoding = sqlite3.connect('reverse_geocoding.sqlite')
+  create_reverse_geocoding_table(conn_reverse_geocoding)
+
+  reverse_geocode_for_all(conn, conn_reverse_geocoding)
 

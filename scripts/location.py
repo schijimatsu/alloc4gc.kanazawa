@@ -57,7 +57,7 @@ def toOneByteAlphaNumeric(s):
   return s.translate(t)
 
 
-def reverse_geocode(lat, lon):
+def call_yahoo_api(lat, lon):
   data = urlencode(
     dict(
       appid=APPID,
@@ -67,27 +67,33 @@ def reverse_geocode(lat, lon):
     )
   ).encode('utf8')
   request = Request(REVERSE_GEOCODER, data=data, method='GET')
-  address = None
   with urlopen('%s?%s' % (request.get_full_url(), request.get_data().decode('ascii'))) as response:
     response_text = response.read()
     response_obj = json.loads(response_text.decode('utf8'), encoding='utf8')
-    # logger.debug(json.dumps(response_obj, ensure_ascii=True))
-    result_info = response_obj['ResultInfo']
-    result_status = result_info['Status']
-    result_count = result_info['Count']
-    result_feature = None
-    if result_status == 200 and result_count > 0:
-      if result_count == 1:
-        result_feature = response_obj['Feature'][0]
-      else:
-        result_feature = response_obj['Feature'][0]
-        logger.warn('Feature of result are there more than 1.')
-        for i, feature in enumerate(response_obj['Feature']):
-          logger.warn('Feature[%d]: %s,' %(i, feature['Property']['Address']))
-    else:
-      logger.warn('Failed to reverse geocode. (%0.13f, %0.13f)' %(lat, lon))
+    response_text = json.dumps(response_obj, ensure_ascii=False)
 
-    address = result_feature['Property']['Address']
+  return response_text
+
+def reverse_geocode(lat, lon):
+  response_text = call_yahoo_api(lat, lon)
+  response_obj = json.loads(response_text, encoding='utf8')
+  # logger.debug(json.dumps(response_obj, ensure_ascii=True))
+  result_info = response_obj['ResultInfo']
+  result_status = result_info['Status']
+  result_count = result_info['Count']
+  result_feature = None
+  if result_status == 200 and result_count > 0:
+    if result_count == 1:
+      result_feature = response_obj['Feature'][0]
+    else:
+      result_feature = response_obj['Feature'][0]
+      logger.warn('Feature of result are there more than 1.')
+      for i, feature in enumerate(response_obj['Feature']):
+        logger.warn('Feature[%d]: %s,' %(i, feature['Property']['Address']))
+  else:
+    logger.warn('Failed to reverse geocode. (%0.13f, %0.13f)' %(lat, lon))
+
+  address = result_feature['Property']['Address']
 
   return address
 
@@ -205,7 +211,6 @@ class AllocationManager(object):
   def getAllocationData(self, address):
     if self.aza is None:
       self.aza = Aza(self.allocation)
-    logger.debug(address)
     return self.aza.generateChikuList(address)
 
   @staticmethod
